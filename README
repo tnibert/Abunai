@@ -1,0 +1,24 @@
+Abunai version 2.0
+Author: Timothy Nibert
+Iron Lotus Studios
+
+Released WTFPL (www.wtfpl.net)
+
+Tested on Ubuntu ARM, Python 2.7
+
+Dependencies:
+Python, TextBlob
+
+About:
+Abunai is language translation liaison bot written in Python.
+
+Usage:
+
+to run: 
+python abunai.py SERVER NICK CHANNEL USERNICK USERLANGUAGE CHANNELLANGUAGE
+do not include the # in the channel name
+languages must be given in two letter codes, e.g. en, es, etc
+
+to use:
+All messages from the CHANNEL will be sent to USERNICK in a private message
+USERNICK can respond to the CHANNEL by private messaging the bot
