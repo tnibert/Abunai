@@ -33,8 +33,10 @@ except:
 #IDENT="Bot"
 #REALNAME="Bot"
 #CHAN="#abu"
-readbuffer=""					#variable to read in what the server sends us
+
 threads = []
+msgqueue = []
+PONG = False
 
 def create_conn():
     # open connection to irc server
@@ -45,12 +47,22 @@ def create_conn():
     s.send("JOIN :{}\r\n".format(CHAN).encode())
     return s
 
-def mesg(text, to):
-	s.send("PRIVMSG {} :{}\r\n".format(to, text).encode())
+class message:
+    def __init__(self, text, to):
+        self.recipient = to
+        self.text = text
+        self.sent = False
 
-def transmesg(line, sendto, lang):
+def mesg(msg):
     """
-    Translate and send message
+    Send message, return number of bytes sent
+    """
+    print("hi")
+    return s.send("PRIVMSG {} :{}\r\n".format(msg.recipient, msg.text).encode())
+
+def trans(line, sendto, lang):
+    """
+    Translate message
     """
     totrans = ""
     translation = ""
@@ -66,41 +78,57 @@ def transmesg(line, sendto, lang):
     if(sendto == USER):
         #mesg(line[0], to)
         translation = line[0] + ": " + str(translation)
-    mesg(str(translation), sendto)
+    msgqueue.append(message(str(translation), sendto))
     print("THREAD Translation: {}".format(translation))
 
-s = create_conn()
+#s = create_conn()
 
-while True:					# loop FOREVER (exit with ctrl c)
-    # all of the code between set 1 and set 2 is just putting the message received from the server into a nice format for us
-    # set 1
-    readbuffer=readbuffer+s.recv(1024).decode()		# store info sent from the server into
-    print("MAIN received data")
-    temp=readbuffer.split("\n")		# remove \n from the readbuffer and store in a temp variable
-    readbuffer=temp.pop( )			# restore readbuffer to empty
-    #totranslate = ""
+def listen():
+    readbuffer = ""
+    while True:					# loop FOREVER (exit with ctrl c)
+        # all of the code between set 1 and set 2 is just putting the message received from the server into a nice format for us
+        # set 1
+        readbuffer=readbuffer+s.recv(1024).decode()		# store info sent from the server into
+        print("LTHREAD received data")
+        temp=readbuffer.split("\n")		# remove \n from the readbuffer and store in a temp variable
+        readbuffer=temp.pop( )			# restore readbuffer to empty
+        #totranslate = ""
 
-    for line in temp:				# parse through every line read from server
-	    # turn line into a list
-        line=line.rstrip()
-        line=line.split()
+        for line in temp:				# parse through every line read from server
+	        # turn line into a list
+            line=line.rstrip()
+            line=line.split()
 
-        # set 2
-        if(line[0]=="PING"):			#if irc server sends a ping, pong back at it
+            # set 2
+            if(line[0]=="PING"):			#if irc server sends a ping, pong back at it
+                PONG = True
+                print("LTHREAD PONG")
+            elif(line[2]==CHAN):	#if a message comes in from the channel
+                print("LTHREAD message sent from " + CHAN)
+                thread = Thread(target = trans, args = (line, USER, userlang))
+                thread.handled = False
+                thread.start()
+                threads.append(thread)
+    	        #line[0] is user ident
+
+            elif(line[0][1:len(USER)+1] == USER and line[2]==NICK): #if user privmsg us
+                #transmesg(line, CHAN, chanlang)
+                thread = Thread(target = trans, args = (line, CHAN, chanlang))
+                thread.handled = False
+                thread.start()
+                threads.append(thread)
+
+if __name__ == '__main__':
+    s = create_conn()
+
+    listenthread = Thread(target = listen)
+    listenthread.start()
+
+    while(True):
+        if PONG:
             s.send("PONG {}\r\n".format(line[1]).encode())
             print("MAIN PONG")
-        elif(line[2]==CHAN):	#if a message comes in from the channel
-            print("MAIN message sent from " + CHAN)
-            thread = Thread(target = transmesg, args = (line, USER, userlang))
-            thread.start()
-            threads.append(thread)
-    	    #line[0] is user ident
-
-        elif(line[0][1:len(USER)+1] == USER and line[2]==NICK): #if user privmsg us
-            #transmesg(line, CHAN, chanlang)
-            thread = Thread(target = transmesg, args = (line, CHAN, chanlang))
-            thread.start()
-            threads.append(thread)
+            PONG = False
 
         # clean up thread pool
         for t in threads:
@@ -111,9 +139,19 @@ while True:					# loop FOREVER (exit with ctrl c)
 
         threads = [t for t in threads if not t.handled]
 
-        print("MAIN Threads: {}".format(len(threads)))
+        # lol, it's all fancy and multithreaded now but this approach is probably more inherently error prone
+        # whatever, it's just an experimental project anyway
+        for m in msgqueue:
+            print("in queue for")
+            mesg(m)
+            m.sent = True
+
+        # if socket sent 0 bytes we retry
+        msgqueue = [m for m in msgqueue if not m.sent]
+
+        if len(threads) > 0:
+            print("MAIN Threads: {}".format(len(threads)))
         #print(totranslate)
 
-        print("MAIN temp: %s" % temp)
-        #print("readbuffer: %s" % readbuffer)
-
+        if len(msgqueue) != 0:
+            print("MAIN WARNING - Message queue not empty - {} items".format(len(msgqueue)))
