@@ -9,6 +9,18 @@ import socket
 from threading import Thread
 from textblob import TextBlob
 
+"""
+Threading:
+We have three types of threads and two queues
+- main thread (main program execution) - reads from queues, cleans queues, sends all messages
+- listen thread - listens to socket, launches an appropriate translation thread, or if we get a ping sets pong flag true
+- translation threads - launched by listen thread, does translation, appends the translated message to the msgqueue
+We have one main thread and one listen thread, but we can have many translation threads going at one time.
+
+threads variable is the thread queue, main thread checks if each thread is finished and removes them if they are
+msgqueue variable is the message queue (outgoing messages), main thread checks msgqueue, sends messages, and removes them from the msgqueue
+"""
+
 # declare variables for where bot goes
 try:
 	HOST=sys.argv[1]
@@ -34,9 +46,15 @@ except:
 #REALNAME="Bot"
 #CHAN="#abu"
 
+DEBUG = False
+
 threads = []
 msgqueue = []
+# when we connect to a network, it will probably forward us to a node
+# indivserver is the node address preceeded with a : for ping pong
+indivserver = ""
 PONG = False
+
 
 def create_conn():
     # open connection to irc server
@@ -47,18 +65,20 @@ def create_conn():
     s.send("JOIN :{}\r\n".format(CHAN).encode())
     return s
 
+
 class message:
     def __init__(self, text, to):
         self.recipient = to
         self.text = text
         self.sent = False
 
+
 def mesg(msg):
     """
     Send message, return number of bytes sent
     """
-    print("hi")
     return s.send("PRIVMSG {} :{}\r\n".format(msg.recipient, msg.text).encode())
+
 
 def trans(line, sendto, lang):
     """
@@ -81,7 +101,6 @@ def trans(line, sendto, lang):
     msgqueue.append(message(str(translation), sendto))
     print("THREAD Translation: {}".format(translation))
 
-#s = create_conn()
 
 def listen():
     readbuffer = ""
@@ -101,6 +120,8 @@ def listen():
 
             # set 2
             if(line[0]=="PING"):			#if irc server sends a ping, pong back at it
+                # this assignment (indivserver) really should only be done once
+                indivserver = line[1]
                 PONG = True
                 print("LTHREAD PONG")
             elif(line[2]==CHAN):	#if a message comes in from the channel
@@ -126,7 +147,7 @@ if __name__ == '__main__':
 
     while(True):
         if PONG:
-            s.send("PONG {}\r\n".format(line[1]).encode())
+            s.send("PONG {}\r\n".format(indivserver).encode())
             print("MAIN PONG")
             PONG = False
 
@@ -149,7 +170,7 @@ if __name__ == '__main__':
         # if socket sent 0 bytes we retry
         msgqueue = [m for m in msgqueue if not m.sent]
 
-        if len(threads) > 0:
+        if len(threads) > 0 and DEBUG:
             print("MAIN Threads: {}".format(len(threads)))
         #print(totranslate)
 
