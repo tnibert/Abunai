@@ -6,6 +6,7 @@
 # this script won't play nicely with servers that need nickserv as is
 import sys
 import socket
+from queue import Queue
 from threading import Thread
 from textblob import TextBlob
 
@@ -48,12 +49,11 @@ except:
 
 DEBUG = False
 
-threads = []
-msgqueue = []
+inmsgqueue = Queue()
+outmsgqueue = Queue()
 # when we connect to a network, it will probably forward us to a node
 # indivserver is the node address preceeded with a : for ping pong
 indivserver = ""
-PONG = False
 
 
 def create_conn():
@@ -67,10 +67,27 @@ def create_conn():
 
 
 class message:
-    def __init__(self, text, to):
+    def __init__(self, line, to, lang):
+        # line[0] is user ident
+        self.userident = line[0]
         self.recipient = to
-        self.text = text
+        self.text = extract_text_from_line(line)
+        self.target_lang = lang
         self.sent = False
+
+    def translate(self):
+        blob = TextBlob(self.text)
+        try:  # for error if same language
+            self.text = blob.translate(to=self.target_lang)
+        except Exception as e:
+            print("THREAD An exception of type {0} occurred. Arguments:\n{1!r}".format(type(e).__name__, e.args))
+            return
+
+    def send(self):
+        out_text = self.text
+        if self.recipient == USER:
+            out_text = self.userident + ": " + str(out_text)
+        mesg(self)
 
 
 def mesg(msg):
@@ -80,26 +97,36 @@ def mesg(msg):
     return s.send("PRIVMSG {} :{}\r\n".format(msg.recipient, msg.text).encode())
 
 
-def trans(line, sendto, lang):
+def extract_text_from_line(line):
     """
-    Translate message
+    extract translateable text from the irc message
+    :param line:
+    :return:
     """
     totrans = ""
-    translation = ""
     for x in line[3:]:
         totrans = totrans + (x + " ")
     totrans = totrans[1:]
-    blob = TextBlob(totrans)
-    try:  # for error if same language
-        translation = blob.translate(to=lang)
-    except Exception as e:
-        print("THREAD An exception of type {0} occurred. Arguments:\n{1!r}".format(type(e).__name__, e.args))
-        return
-    if (sendto == USER):
-        # mesg(line[0], to)
-        translation = line[0] + ": " + str(translation)
-    msgqueue.append(message(str(translation), sendto))
-    print("THREAD Translation: {}".format(translation))
+    return totrans
+
+
+def translate_thread():
+    while True:
+        # Queue will block until item is available
+        cur_msg = inmsgqueue.get()
+        cur_msg.translate()
+        outmsgqueue.put(cur_msg)
+
+
+def send_thread():
+    while True:
+        cur_msg = outmsgqueue.get()
+        try:
+            cur_msg.send()
+        # make catch more specific
+        except Exception as e:
+            outmsgqueue.put(cur_msg)
+            continue
 
 
 def listen():
@@ -122,58 +149,30 @@ def listen():
             if (line[0] == "PING"):  # if irc server sends a ping, pong back at it
                 # this assignment (indivserver) really should only be done once
                 indivserver = line[1]
-                PONG = True
+                s.send("PONG {}\r\n".format(indivserver).encode())
                 print("LTHREAD PONG")
-            elif (line[2] == CHAN):  # if a message comes in from the channel
-                print("LTHREAD message sent from " + CHAN)
-                thread = Thread(target=trans, args=(line, USER, userlang))
-                thread.handled = False
-                thread.start()
-                threads.append(thread)
-                # line[0] is user ident
 
-            elif (line[0][1:len(USER) + 1] == USER and line[2] == NICK):  # if user privmsg us
-                # transmesg(line, CHAN, chanlang)
-                thread = Thread(target=trans, args=(line, CHAN, chanlang))
-                thread.handled = False
-                thread.start()
-                threads.append(thread)
+            # if a message comes in from the channel, private message to our user
+            elif (line[2] == CHAN):
+                print("LTHREAD message sent from " + CHAN)
+                inmsgqueue.put(message(line, USER, userlang))
+
+            # if user privmsg us, send to channel
+            elif (line[0][1:len(USER) + 1] == USER and line[2] == NICK):
+                inmsgqueue.put(message(line, CHAN, chanlang))
 
 
 if __name__ == '__main__':
     s = create_conn()
 
     listenthread = Thread(target=listen)
+    translatethread = Thread(target=translate_thread)
+    sendthread = Thread(target=send_thread)
+
     listenthread.start()
+    translatethread.start()
+    sendthread.start()
 
-    while True:
-        if PONG:
-            s.send("PONG {}\r\n".format(indivserver).encode())
-            print("MAIN PONG")
-            PONG = False
-
-        # clean up thread pool
-        for t in threads:
-            if not t.isAlive():
-                t.handled = True
-            else:
-                t.handled = False
-
-        threads = [t for t in threads if not t.handled]
-
-        # lol, it's all fancy and multithreaded now but this approach is probably more inherently error prone
-        # whatever, it's just an experimental project anyway
-        for m in msgqueue:
-            print("in queue for")
-            mesg(m)
-            m.sent = True
-
-        # if socket sent 0 bytes we retry
-        msgqueue = [m for m in msgqueue if not m.sent]
-
-        if len(threads) > 0 and DEBUG:
-            print("MAIN Threads: {}".format(len(threads)))
-        # print(totranslate)
-
-        if len(msgqueue) != 0:
-            print("MAIN WARNING - Message queue not empty - {} items".format(len(msgqueue)))
+    listenthread.join()
+    translatethread.join()
+    send_thread().join()
