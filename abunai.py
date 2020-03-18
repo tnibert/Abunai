@@ -23,28 +23,28 @@ msgqueue variable is the message queue (outgoing messages), main thread checks m
 
 # declare variables for where bot goes
 try:
-	HOST=sys.argv[1]
-	PORT=6667
-	NICK=sys.argv[2]
-	IDENT=sys.argv[2]
-	REALNAME=sys.argv[2]
-	CHAN="#" + sys.argv[3]
-	USER=sys.argv[4]
-	userlang=sys.argv[5]
-	chanlang=sys.argv[6]
+    HOST = sys.argv[1]
+    PORT = 6667
+    NICK = sys.argv[2]
+    IDENT = sys.argv[2]
+    REALNAME = sys.argv[2]
+    CHAN = "#" + sys.argv[3]
+    USER = sys.argv[4]
+    userlang = sys.argv[5]
+    chanlang = sys.argv[6]
 except:
-	print("invalid args")
-	print("Usage: python abunai.py SERVER NICK CHANNEL USERNICK USERLANGUAGE CHANNELLANGUAGE")
-	print("do not include the # in the channel name")
-	exit()
+    print("invalid args")
+    print("Usage: python abunai.py SERVER NICK CHANNEL USERNICK USERLANGUAGE CHANNELLANGUAGE")
+    print("do not include the # in the channel name")
+    exit()
 
 # if you want to manually set the info...
-#HOST=""
-#PORT=6667
-#NICK="Bot"
-#IDENT="Bot"
-#REALNAME="Bot"
-#CHAN="#abu"
+# HOST=""
+# PORT=6667
+# NICK="Bot"
+# IDENT="Bot"
+# REALNAME="Bot"
+# CHAN="#abu"
 
 DEBUG = False
 
@@ -58,7 +58,7 @@ PONG = False
 
 def create_conn():
     # open connection to irc server
-    s=socket.socket( )
+    s = socket.socket()
     s.connect((HOST, PORT))
     s.send("NICK {}\r\n".format(NICK).encode())
     s.send("USER {} {} bla :{}\r\n".format(IDENT, HOST, REALNAME).encode())
@@ -90,13 +90,13 @@ def trans(line, sendto, lang):
         totrans = totrans + (x + " ")
     totrans = totrans[1:]
     blob = TextBlob(totrans)
-    try:				# for error if same language
+    try:  # for error if same language
         translation = blob.translate(to=lang)
     except Exception as e:
         print("THREAD An exception of type {0} occurred. Arguments:\n{1!r}".format(type(e).__name__, e.args))
         return
-    if(sendto == USER):
-        #mesg(line[0], to)
+    if (sendto == USER):
+        # mesg(line[0], to)
         translation = line[0] + ": " + str(translation)
     msgqueue.append(message(str(translation), sendto))
     print("THREAD Translation: {}".format(translation))
@@ -104,48 +104,49 @@ def trans(line, sendto, lang):
 
 def listen():
     readbuffer = ""
-    while True:					# loop FOREVER (exit with ctrl c)
+    while True:  # loop FOREVER (exit with ctrl c)
         # all of the code between set 1 and set 2 is just putting the message received from the server into a nice format for us
         # set 1
-        readbuffer=readbuffer+s.recv(1024).decode()		# store info sent from the server into
+        readbuffer = readbuffer + s.recv(1024).decode()  # store info sent from the server into
         print("LTHREAD received data")
-        temp=readbuffer.split("\n")		# remove \n from the readbuffer and store in a temp variable
-        readbuffer=temp.pop( )			# restore readbuffer to empty
-        #totranslate = ""
+        temp = readbuffer.split("\n")  # remove \n from the readbuffer and store in a temp variable
+        readbuffer = temp.pop()  # restore readbuffer to empty
+        # totranslate = ""
 
-        for line in temp:				# parse through every line read from server
-	        # turn line into a list
-            line=line.rstrip()
-            line=line.split()
+        for line in temp:  # parse through every line read from server
+            # turn line into a list
+            line = line.rstrip()
+            line = line.split()
 
             # set 2
-            if(line[0]=="PING"):			#if irc server sends a ping, pong back at it
+            if (line[0] == "PING"):  # if irc server sends a ping, pong back at it
                 # this assignment (indivserver) really should only be done once
                 indivserver = line[1]
                 PONG = True
                 print("LTHREAD PONG")
-            elif(line[2]==CHAN):	#if a message comes in from the channel
+            elif (line[2] == CHAN):  # if a message comes in from the channel
                 print("LTHREAD message sent from " + CHAN)
-                thread = Thread(target = trans, args = (line, USER, userlang))
+                thread = Thread(target=trans, args=(line, USER, userlang))
                 thread.handled = False
                 thread.start()
                 threads.append(thread)
-    	        #line[0] is user ident
+                # line[0] is user ident
 
-            elif(line[0][1:len(USER)+1] == USER and line[2]==NICK): #if user privmsg us
-                #transmesg(line, CHAN, chanlang)
-                thread = Thread(target = trans, args = (line, CHAN, chanlang))
+            elif (line[0][1:len(USER) + 1] == USER and line[2] == NICK):  # if user privmsg us
+                # transmesg(line, CHAN, chanlang)
+                thread = Thread(target=trans, args=(line, CHAN, chanlang))
                 thread.handled = False
                 thread.start()
                 threads.append(thread)
+
 
 if __name__ == '__main__':
     s = create_conn()
 
-    listenthread = Thread(target = listen)
+    listenthread = Thread(target=listen)
     listenthread.start()
 
-    while(True):
+    while True:
         if PONG:
             s.send("PONG {}\r\n".format(indivserver).encode())
             print("MAIN PONG")
@@ -172,7 +173,7 @@ if __name__ == '__main__':
 
         if len(threads) > 0 and DEBUG:
             print("MAIN Threads: {}".format(len(threads)))
-        #print(totranslate)
+        # print(totranslate)
 
         if len(msgqueue) != 0:
             print("MAIN WARNING - Message queue not empty - {} items".format(len(msgqueue)))
