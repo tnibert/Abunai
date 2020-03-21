@@ -193,6 +193,7 @@ def listen():
                 with socket_lock:
                     s.send("PONG {}\r\n".format(indivserver).encode())
                 print("PONG")
+                continue
 
             if len(line) < 3:
                 continue
