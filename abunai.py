@@ -57,14 +57,17 @@ except:
 # userlang = "en"
 # chanlang = "es"
 
-# this will be sent through the queues to stop the consuming threads
+# this marker will be sent through the queues to stop the consumer threads
 END = "quit"
 
 inmsgqueue = Queue()
 outmsgqueue = Queue()
 
 # I don't think this lock is really necessary
+# because I tested making simultaneous send() calls from
+# multiple threads to netcat -l and nothing was garbled
 # but always good to be safe
+# We wrap our socket send() calls in this lock
 socket_lock = Lock()
 
 stopped = False
