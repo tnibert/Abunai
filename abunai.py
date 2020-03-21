@@ -3,11 +3,14 @@
 # IRC translator bot
 # call with python abunai.py server nick channel USER USERLANGUAGE CHANNELLANGUAGE
 # do not include the # sign in the channel arg
-# as is, this script won't play nicely with servers that need nickserv
+# as is, this script won't play nicely with servers that need nickserv or sasl
+# quit by entering q at the terminal
+
 import sys
 import socket
+import traceback
 from queue import Queue
-from threading import Thread
+from threading import Thread, Lock
 from textblob import TextBlob
 
 """
@@ -24,10 +27,9 @@ Queues:
 - inmsgqueue - bridges messages from listen thread to translation thread for translation
 - outmsgqueue - bridges messages from translation thread to send thread for sending back to server
 
-todo: is socket s unacceptable shared state?
 """
 
-# declare variables for where bot goes
+# settings for bot from command invocation
 try:
     HOST = sys.argv[1]
     PORT = 6667
@@ -45,21 +47,26 @@ except:
     exit()
 
 # if you want to manually set the info...
-# HOST=""
+# HOST="irc.whatever.net"
 # PORT=6667
 # NICK="Bot"
 # IDENT="Bot"
 # REALNAME="Bot"
 # CHAN="#abu"
+# USER="myusername"
+# userlang = "en"
+# chanlang = "es"
 
-DEBUG = False
+# this will be sent through the queues to stop the consuming threads
 END = "quit"
 
 inmsgqueue = Queue()
 outmsgqueue = Queue()
-# when we connect to a network, it will probably forward us to a node
-# indivserver is the node address preceeded with a : for ping pong
-indivserver = ""
+
+# I don't think this lock is really necessary
+# but always good to be safe
+socket_lock = Lock()
+
 stopped = False
 
 
@@ -79,7 +86,7 @@ def create_conn():
 class message:
     def __init__(self, line, to, lang):
         # line[0] is user ident
-        self.userident = line[0]
+        self.userident = line[0].split("!")[0]
         self.recipient = to
         self.text = extract_text_from_line(line)
         self.target_lang = lang
@@ -87,25 +94,17 @@ class message:
 
     def translate(self):
         blob = TextBlob(self.text)
-        try:  # for error if same language
-            self.text = blob.translate(to=self.target_lang)
-        except Exception as e:
-            print("THREAD An exception of type {0} occurred. Arguments:\n{1!r}".format(type(e).__name__, e.args))
-            return
+        self.text = blob.translate(to=self.target_lang)
 
-    def send(self):
+    def send_info(self):
         out_text = self.text
         if self.recipient == USER:
             # tell user who the message came from
             out_text = self.userident + ": " + str(out_text)
-        mesg(self.recipient, out_text)
+        return self.recipient, out_text
 
-
-def mesg(recipient, text):
-    """
-    Send message, return number of bytes sent
-    """
-    return s.send("PRIVMSG {} :{}\r\n".format(recipient, text).encode())
+    def __str__(self):
+        return self.text
 
 
 def extract_text_from_line(line):
@@ -130,8 +129,14 @@ def translate_thread():
             continue
 
         print("Translating")
-        cur_msg.translate()
+        try:
+            cur_msg.translate()
+        except Exception as e:
+            print("Problem translating, sending untranslated: {}".format(cur_msg))
+            traceback.print_exc()
         outmsgqueue.put(cur_msg)
+
+    print("Translate thread complete")
 
 
 def send_thread():
@@ -143,46 +148,62 @@ def send_thread():
 
         print("Sending")
         try:
-            cur_msg.send()
-        # make catch more specific
+            with socket_lock:
+                s.send("PRIVMSG {} :{}\r\n".format(*cur_msg.send_info()).encode())
+        # todo: make catch more specific
         except Exception as e:
+            print("Problem sending message, retrying: {}".format(cur_msg))
+            traceback.print_exc()
             outmsgqueue.put(cur_msg)
             continue
 
+    print("Send thread complete")
+
 
 def listen():
-    readbuffer = ""
     while not stopped:
-        # all of the code between set 1 and set 2 is just putting the message received
-        # from the server into a nice format for us to work with
-        # todo: reexamine this munging, limiting our recv amount...
-        # set 1
-        readbuffer = readbuffer + s.recv(1024).decode()  # store info sent from the server
-        print("LTHREAD received data")
-        temp = readbuffer.split("\n")  # remove \n from the readbuffer and store in a temp variable
-        readbuffer = temp.pop()  # restore readbuffer to empty
+        # store buffer from the server
+        readbuffer = s.recv(1024).decode()
 
-        for line in temp:  # parse through every line read from server
+        print("Listen thread received data")
+        if len(readbuffer) == 0:
+            continue
+
+        # split the read buffer into separate lines
+        temp = readbuffer.split("\n")
+        # the last item is always empty or ":", discard
+        temp.pop()
+
+        # parse through every line read from server
+        for line in temp:
             print(line)
             # turn line into a list
             line = line.rstrip()
             line = line.split()
 
-            # set 2
+            if len(line) < 2:
+                continue
+
             if line[0] == "PING":  # if irc server sends a ping, pong back at it
-                # this assignment (indivserver) really should only be done once
+                # indivserver is the node address in the irc network
                 indivserver = line[1]
-                s.send("PONG {}\r\n".format(indivserver).encode())
-                print("LTHREAD PONG")
+                with socket_lock:
+                    s.send("PONG {}\r\n".format(indivserver).encode())
+                print("PONG")
+
+            if len(line) < 3:
+                continue
 
             # if a message comes in from the channel, private message to our user
-            elif line[2] == CHAN:
-                print("LTHREAD message sent from " + CHAN)
+            if line[2] == CHAN:
+                print("Message sent from " + CHAN)
                 inmsgqueue.put(message(line, USER, userlang))
 
             # if user privmsg us, send to channel
             elif line[0][1:len(USER) + 1] == USER and line[2] == NICK:
                 inmsgqueue.put(message(line, CHAN, chanlang))
+
+    print("Listen thread complete")
 
 
 if __name__ == '__main__':
@@ -211,12 +232,12 @@ if __name__ == '__main__':
             with outmsgqueue.mutex:
                 outmsgqueue.queue.clear()
             outmsgqueue.put(END)
+
             s.shutdown(socket.SHUT_RDWR)
 
     print("Joining threads")
     sendthread.join()
     translatethread.join()
-    # todo: this will not finish until the socket is fed
     listenthread.join()
 
     print("Complete")
