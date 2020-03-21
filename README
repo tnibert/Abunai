@@ -1,4 +1,4 @@
-Abunai version 2.1
+Abunai version 2.2
 Author: Timothy Nibert
 Iron Lotus Studios
 
@@ -10,7 +10,7 @@ Dependencies:
 Python, TextBlob
 
 About:
-Abunai is language translation liaison bot written in Python.
+Abunai is an IRC bot for real time language translation written in Python.
 
 Usage:
 
@@ -22,3 +22,6 @@ languages must be given in two letter codes, e.g. en, es, etc
 to use:
 All messages from the CHANNEL will be sent to USERNICK in a private message
 USERNICK can respond to the CHANNEL by private messaging the bot
+
+to quit:
+At the console, type q and then <enter>
